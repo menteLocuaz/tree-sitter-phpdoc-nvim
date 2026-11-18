@@ -3,8 +3,6 @@
 #define TSDEBUG 0
 
 #if TSDEBUG
-#include <stdio.h>
-#define LOG(...)  fprintf(stderr, __VA_ARGS__)
 #else
 #define LOG(...)
 #endif
@@ -16,29 +14,61 @@ enum TokenType {
   TEXT_NOT_VERSION,
 };
 
-// Used as version string for some PEAR packages
-static const char* const package_version = "@package_version@";
+static const char *const PEAR_PACKAGE_VERSION = "@package_version@";
 
-void *tree_sitter_phpdoc_external_scanner_create() { return NULL; }
+// ============================================================================
+// Pure Character Predicates (Easily Testable)
+// ============================================================================
+static inline bool is_newline(int32_t c) {
+  return c == '\r' || c == '\n';
+}
 
-void tree_sitter_phpdoc_external_scanner_destroy(void *payload) {}
+static inline bool is_whitespace(int32_t c) {
+  return c == ' ' || c == '\t' || is_newline(c);
+}
 
-unsigned tree_sitter_phpdoc_external_scanner_serialize(void *payload, char *buffer) { return 0; }
+static inline bool is_ascii_digit(int32_t c) {
+  return c >= '0' && c <= '9';
+}
 
-void tree_sitter_phpdoc_external_scanner_deserialize(void *payload, const char *buffer, unsigned length) {}
+static inline bool is_php_ident_start(int32_t c) {
+  return c == '_' ||
+         (c >= 'a' && c <= 'z') ||
+         (c >= 'A' && c <= 'Z') ||
+         (c >= 0x00A1 && c <= 0x00FF);
+}
 
-static void advance(TSLexer *lexer) { lexer->advance(lexer, false); }
+static inline bool is_any_text_symbol_valid(const bool *valid_symbols) {
+  return valid_symbols[TEXT] ||
+         valid_symbols[TEXT_AFTER_TYPE] ||
+         valid_symbols[TEXT_IN_INLINE_TAG] ||
+         valid_symbols[TEXT_NOT_VERSION];
+}
 
-static void skip(TSLexer *lexer) { lexer->advance(lexer, true); }
+// ============================================================================
+// Lexer Navigation Primitives
+// ============================================================================
+static inline void advance(TSLexer *lexer) {
+  lexer->advance(lexer, false);
+}
 
-// Skip line prefix:
-//
-// /**\n  <-- lookahead points here
-//   *\n  <-- or here ...
-//   * bla
-//    ^ ... and will skip to here
-//
-// False is returned if other chars than [\n *] appear before '* '.
+static inline void skip(TSLexer *lexer) {
+  lexer->advance(lexer, true);
+}
+
+static bool skip_whitespace(TSLexer *lexer) {
+  bool skipped = false;
+  while (is_whitespace(lexer->lookahead)) {
+    skip(lexer);
+    skipped = true;
+  }
+  return skipped;
+}
+
+/**
+ * Skips the newline prefix inside a PHPDoc comment (e.g. "\n  * ").
+ * Returns false if characters other than [\r\n *] appear before finding "* ".
+ */
 static bool skip_to_text_start(TSLexer *lexer) {
   bool asterisk_found = false;
   while (true) {
@@ -50,7 +80,6 @@ static bool skip_to_text_start(TSLexer *lexer) {
         break;
       case ' ':
         if (asterisk_found) {
-          // '* ' found: potential start of next content
           return true;
         }
         skip(lexer);
@@ -65,22 +94,13 @@ static bool skip_to_text_start(TSLexer *lexer) {
   }
 }
 
-static bool skip_whitespace(TSLexer *lexer) {
-  bool skipped = false;
-  while (
-      lexer->lookahead == ' ' ||
-      lexer->lookahead == '\t' ||
-      lexer->lookahead == '\n' ||
-      lexer->lookahead == '\r'
-  ) {
-    skip(lexer);
-    skipped = true;
-  }
-  return skipped;
-}
+// ============================================================================
+// Lexical Disambiguation Sub-scanners
+// ============================================================================
 
-// Returns whether a valid variable name like $ab_cde was detected.
-// Preceding whitespace will be skipped.
+/**
+ * Detects whether the stream starts with a valid PHP variable name (e.g. $ab_cde).
+ */
 static bool scan_variable_name(TSLexer *lexer, bool *has_content) {
   if (skip_whitespace(lexer)) {
     *has_content = true;
@@ -90,16 +110,9 @@ static bool scan_variable_name(TSLexer *lexer, bool *has_content) {
   }
   advance(lexer);
 
-  // From PHP parser:
-  //  name: /[_a-zA-Z\u00A1-\u00ff][_a-zA-Z\u00A1-\u00ff\d]*/,
   while (true) {
-    if (
-        lexer->lookahead == '_' ||
-        (lexer->lookahead >= 'a' && lexer->lookahead <= 'z') ||
-        (lexer->lookahead >= 'A' && lexer->lookahead <= 'Z') ||
-        (lexer->lookahead >= 0x00A1 && lexer->lookahead <= 0x00FF) ||
-        (*has_content && lexer->lookahead >= '0' && lexer->lookahead <= '9')
-       ) {
+    int32_t c = lexer->lookahead;
+    if (is_php_ident_start(c) || (*has_content && is_ascii_digit(c))) {
       *has_content = true;
       advance(lexer);
     } else {
@@ -108,20 +121,30 @@ static bool scan_variable_name(TSLexer *lexer, bool *has_content) {
   }
 }
 
-// Returns whether a valid version string was detected:
-//   1.2.3
-//   1.blabla-x
-//   vcs: $some_vector$
-//   $some_vector$
-//   @package_version@
-// Preceding whitespace will be skipped.
+static bool match_exact_literal(TSLexer *lexer, const char *literal) {
+  while (*literal != '\0') {
+    if (*literal != lexer->lookahead) {
+      return false;
+    }
+    literal++;
+    advance(lexer);
+  }
+  return true;
+}
+
+/**
+ * Detects whether the stream starts with a valid version string:
+ * - Semver / numeric: "1.2.3", "1.blabla-x"
+ * - VCS vector: "vcs: $some_vector$" or "$some_vector$"
+ * - PEAR macro: "@package_version@"
+ */
 static bool scan_version(TSLexer *lexer, bool *has_content) {
   skip_whitespace(lexer);
-  const char* pkg = package_version;
   bool numeric_started = false;
   bool vcs_started = false;
   bool vcs_complete = false;
   bool vector_started = false;
+
   while (true) {
     switch (lexer->lookahead) {
       case '\r':
@@ -148,14 +171,7 @@ static bool scan_version(TSLexer *lexer, bool *has_content) {
         break;
 
       case '@':
-        while (*pkg != '\0') {
-          if (*(pkg++) != lexer->lookahead) {
-            return false;
-          }
-          advance(lexer);
-        }
-        return true;
-        break;
+        return match_exact_literal(lexer, PEAR_PACKAGE_VERSION);
 
       case '$':
         if (vector_started) {
@@ -164,6 +180,7 @@ static bool scan_version(TSLexer *lexer, bool *has_content) {
         if (!*has_content || vcs_complete) {
           vector_started = true;
         }
+        /* INTENTIONAL FALLTHROUGH FROM THE ORIGINAL CODE */
 
       case '0':
       case '1':
@@ -184,12 +201,17 @@ static bool scan_version(TSLexer *lexer, bool *has_content) {
         if (!*has_content) {
           vcs_started = true;
         }
+        break;
     }
     advance(lexer);
     *has_content = true;
   }
 }
 
+/**
+ * Scans general text content until the end of the line, the end of the comment,
+ * the start of an inline tag ("{@"), or the end of an inline tag ("}").
+ */
 static bool scan_text(TSLexer *lexer, bool is_inline, bool has_content) {
   while (true) {
     lexer->mark_end(lexer);
@@ -204,7 +226,6 @@ static bool scan_text(TSLexer *lexer, bool is_inline, bool has_content) {
 
       case '@':
       case '\\':
-        // don't allow @ or \\ at text start to not mess with tags and namespaces
         if (!has_content) {
           return false;
         }
@@ -213,14 +234,12 @@ static bool scan_text(TSLexer *lexer, bool is_inline, bool has_content) {
       case '{':
         advance(lexer);
         if (lexer->lookahead == '@') {
-          // new inline tag starts, so text node is complete
           return has_content;
         }
         break;
 
       case '}':
         if (is_inline) {
-          // inline tag ends, so text node is complete
           return has_content;
         }
         break;
@@ -228,7 +247,6 @@ static bool scan_text(TSLexer *lexer, bool is_inline, bool has_content) {
       case ' ':
         advance(lexer);
         switch (lexer->lookahead) {
-          // check for end of comment: ' */', ' **/', ...
           case '*':
             while (lexer->lookahead == '*') {
               advance(lexer);
@@ -237,11 +255,10 @@ static bool scan_text(TSLexer *lexer, bool is_inline, bool has_content) {
               return has_content;
             }
             break;
-          // check for start of inline tag
+
           case '{':
             advance(lexer);
             if (lexer->lookahead == '@') {
-              // new inline tag starts, so text node is complete
               return has_content;
             }
             break;
@@ -253,79 +270,98 @@ static bool scan_text(TSLexer *lexer, bool is_inline, bool has_content) {
   }
 }
 
-bool tree_sitter_phpdoc_external_scanner_scan(void *payload, TSLexer *lexer,
-                                                  const bool *valid_symbols) {
+// ============================================================================
+// Tree-sitter ABI Lifecycle and Entry Point
+// ============================================================================
+void *tree_sitter_phpdoc_external_scanner_create(void) { return NULL; }
+
+void tree_sitter_phpdoc_external_scanner_destroy(void *payload) {
+  (void)payload;
+}
+
+unsigned tree_sitter_phpdoc_external_scanner_serialize(void *payload, char *buffer) {
+  (void)payload;
+  (void)buffer;
+  return 0;
+}
+
+void tree_sitter_phpdoc_external_scanner_deserialize(void *payload, const char *buffer, unsigned length) {
+  (void)payload;
+  (void)buffer;
+  (void)length;
+}
+
+bool tree_sitter_phpdoc_external_scanner_scan(
+    void *payload,
+    TSLexer *lexer,
+    const bool *valid_symbols
+) {
+  (void)payload;
+
   LOG("scanner called text:%d text_after_type:%d text_in_inline_tag:%d text_not_version:%d\n",
       valid_symbols[TEXT],
       valid_symbols[TEXT_AFTER_TYPE],
       valid_symbols[TEXT_IN_INLINE_TAG],
       valid_symbols[TEXT_NOT_VERSION]);
 
+  if (!is_any_text_symbol_valid(valid_symbols)) {
+    LOG("scanner detected:nothing return:0\n");
+    return false;
+  }
+
   bool skipped_nl = false;
   bool has_content = false;
-  if (
-      valid_symbols[TEXT] ||
-      valid_symbols[TEXT_AFTER_TYPE] ||
-      valid_symbols[TEXT_IN_INLINE_TAG] ||
-      valid_symbols[TEXT_NOT_VERSION]
-  ) {
 
-    if (lexer->lookahead == '\n' || lexer->lookahead == '\r') {
-      if (!skip_to_text_start(lexer)) {
-        return false;
-      }
-      skipped_nl = true;
-    }
-
-    // node start must always have a preceding space
-    if (lexer->lookahead != ' ') {
+  if (is_newline(lexer->lookahead)) {
+    if (!skip_to_text_start(lexer)) {
       return false;
     }
-    skip(lexer);
+    skipped_nl = true;
+  }
 
-    if (valid_symbols[TEXT] && scan_text(lexer, false, has_content)) {
-      lexer->result_symbol = TEXT;
-      LOG("  scanner detected:text return:1\n");
+  // Every text node requires a mandatory preceding space
+  if (lexer->lookahead != ' ') {
+    return false;
+  }
+  skip(lexer);
+
+  if (valid_symbols[TEXT] && scan_text(lexer, false, has_content)) {
+    lexer->result_symbol = TEXT;
+    LOG("  scanner detected:text return:1\n");
+    return true;
+  }
+
+  if (valid_symbols[TEXT_AFTER_TYPE]) {
+    lexer->result_symbol = TEXT_AFTER_TYPE;
+    if (scan_variable_name(lexer, &has_content)) {
+      LOG("  scanner detected:variable_name return:0\n");
+      return false;
+    }
+    skip_whitespace(lexer);
+    if (scan_text(lexer, false, has_content)) {
+      LOG("  scanner detected:text_after_type return:1\n");
       return true;
-    }
-
-    if (valid_symbols[TEXT_AFTER_TYPE]) {
-      lexer->result_symbol = TEXT_AFTER_TYPE;
-      // Ensure that we have '/** int description' and not '/** int $var description'
-      if (scan_variable_name(lexer, &has_content)) {
-        LOG("  scanner detected:variable_name return:0\n");
-        return false;
-      }
-      skip_whitespace(lexer);
-      if (scan_text(lexer, false, has_content)) {
-        LOG("  scanner detected:text_after_type return:1\n");
-        return true;
-      }
-    }
-
-    if (valid_symbols[TEXT_IN_INLINE_TAG] && scan_text(lexer, true, has_content)) {
-      lexer->result_symbol = TEXT_IN_INLINE_TAG;
-      LOG("  scanner detected:text_in_inline_tag return:1\n");
-      return true;
-    }
-
-    if (valid_symbols[TEXT_NOT_VERSION]) {
-      lexer->result_symbol = TEXT_NOT_VERSION;
-      // Ensure that node doesn't start with anything that looks like a version
-      // - but only if we didn't skip a linebreak. Otherwhise the lexer might
-      // advance over a new tag like '\n * @pa...' to check for
-      // '@package_version@'. This would result in the tag being parsed as
-      // valid description.
-      if (!skipped_nl && scan_version(lexer, &has_content)) {
-        LOG("  scanner detected:version return:0\n");
-        return false;
-      }
-      if (scan_text(lexer, false, has_content)) {
-        LOG("  scanner detected:text_not_version return:1\n");
-        return true;
-      }
     }
   }
+
+  if (valid_symbols[TEXT_IN_INLINE_TAG] && scan_text(lexer, true, has_content)) {
+    lexer->result_symbol = TEXT_IN_INLINE_TAG;
+    LOG("  scanner detected:text_in_inline_tag return:1\n");
+    return true;
+  }
+
+  if (valid_symbols[TEXT_NOT_VERSION]) {
+    lexer->result_symbol = TEXT_NOT_VERSION;
+    if (!skipped_nl && scan_version(lexer, &has_content)) {
+      LOG("  scanner detected:version return:0\n");
+      return false;
+    }
+    if (scan_text(lexer, false, has_content)) {
+      LOG("  scanner detected:text_not_version return:1\n");
+      return true;
+    }
+  }
+
   LOG("scanner detected:nothing return:0\n");
   return false;
 }

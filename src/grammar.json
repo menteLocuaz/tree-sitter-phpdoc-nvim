@@ -2192,10 +2192,6 @@
         }
       ]
     },
-    "name": {
-      "type": "PATTERN",
-      "value": "[_a-zA-Z\\u0080-\\u009f\\u00a1-\\u200a\\u200c-\\u205f\\u2061-\\ufefe\\uff00-\\uffff][_a-zA-Z\\u0080-\\u009f\\u00a1-\\u200a\\u200c-\\u205f\\u2061-\\ufefe\\uff00-\\uffff\\d]*"
-    },
     "named_type": {
       "type": "CHOICE",
       "members": [
@@ -2221,6 +2217,10 @@
           "name": "generic_type"
         }
       ]
+    },
+    "name": {
+      "type": "PATTERN",
+      "value": "[_a-zA-Z\\u0080-\\u009f\\u00a1-\\u200a\\u200c-\\u205f\\u2061-\\ufefe\\uff00-\\uffff][_a-zA-Z\\u0080-\\u009f\\u00a1-\\u200a\\u200c-\\u205f\\u2061-\\ufefe\\uff00-\\uffff\\d]*"
     },
     "namespace_name": {
       "type": "SEQ",

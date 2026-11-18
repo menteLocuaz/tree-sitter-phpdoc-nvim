@@ -4,3 +4,207 @@ build
 .DS_Store
 examples
 .ccls-cache
+
+# ==========================================
+# OPERATING SYSTEM
+# ==========================================
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# ==========================================
+# IDEs AND EDITORS
+# ==========================================
+.vscode/
+.idea/
+*.swp
+*.swo
+*.sublime-workspace
+
+# ==========================================
+# JAVASCRIPT / NODE.JS
+# ==========================================
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+.npm/
+.npmrc.local
+.env.local
+.env.*.local
+.next/
+.nuxt/
+dist/
+build/
+coverage/
+.parcel-cache/
+.turbo/
+*.tsbuildinfo
+
+# ==========================================
+# PYTHON
+# ==========================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.venv/
+env/
+ENV/
+*.egg-info/
+.eggs/
+wheels/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+.coverage
+htmlcov/
+.ipynb_checkpoints/
+
+# ==========================================
+# C / C++
+# ==========================================
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dylib
+*.dll
+*.exe
+*.out
+*.class
+*.pdb
+*.ilk
+*.pch
+*.gch
+*.gcda
+*.gcno
+*.gcov
+
+# Build directories
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+compile_commands.json
+Makefile.generated
+build/
+
+# Visual Studio
+.vs/
+Debug/
+Release/
+x64/
+x86/
+
+# ==========================================
+# ENVIRONMENT VARIABLES AND SECRETS
+# ==========================================
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets.json
+credentials.json
+
+# ==========================================
+# LOGS AND TEMPORARY FILES
+# ==========================================
+*.log
+logs/
+tmp/
+temp/
+*.tmp
+*.bak
+*.old
+*.cache
+
+# ==========================================
+# DATABASES AND LOCAL DATA
+# ==========================================
+*.sqlite
+*.sqlite3
+*.db
+
+# ==========================================
+# TEST AND COVERAGE OUTPUT
+# ==========================================
+coverage/
+.nyc_output/
+test-results/
+
+# ==========================================
+# GENERATED DOCUMENTATION
+# ==========================================
+site/
+docs/_build/
+# ==========================================
+# NODE.JS
+# ==========================================
+
+# Dependencies
+node_modules/
+jspm_packages/
+
+# Package managers
+.npm/
+.pnpm-store/
+.yarn/*
+!.yarn/patches/
+!.yarn/plugins/
+!.yarn/releases/
+!.yarn/versions/
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Runtime data
+pids/
+*.pid
+*.seed
+*.pid.lock
+
+# Build outputs
+dist/
+build/
+lib/
+
+# Frameworks and tools
+.next/
+.nuxt/
+.output/
+.svelte-kit/
+.angular/
+.parcel-cache/
+.turbo/
+.vercel/
+.netlify/
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Testing
+coverage/
+.nyc_output/
+playwright-report/
+test-results/
+
+# TypeScript
+*.tsbuildinfo
+
+# Debug
+.npm-debug.log*
+.node_repl_history
+target

@@ -3,10 +3,10 @@ name: build/test
 on:
   pull_request:
     branches:
-      - '**'
+      - "**"
   push:
     branches:
-      - 'master'
+      - "master"
 
 jobs:
   test:
@@ -24,9 +24,10 @@ jobs:
           node-version: 18
       - uses: actions/setup-python@v4
         with:
-          python-version: '3.12'
+          python-version: "3.12"
       - run: npm install
-      - run: ./node_modules/.bin/tree-sitter generate
+      - run: npm run generate
+      - run: node scripts/strip-o0-pragma.js --check
       - run: ./node_modules/.bin/tree-sitter test
 
   format:
